@@ -1,10 +1,12 @@
-import math
-from math import pi,radians, cos, sin, asin, sqrt
+from math import pi,radians, cos, sin, asin, sqrt, ceil, floor
 from s2sphere import CellId, LatLng, Cell, MAX_AREA, Point
 
-EARTH_R = 6371000.0
-EARTH_Rmax = 6378137.0
-EARTH_Rmin = 6356752.3
+earth_Rmean = 6371000.0
+earth_Rrect = 6367000.0
+earth_Rmax = 6378137.0
+earth_Rmin = 6356752.3
+def earth_Rreal(latrad):
+    return (1.0 / (((cos(latrad)) / earth_Rmax) ** 2 + ((sin(latrad)) / earth_Rmin) ** 2)) ** 0.5
 
 max_size = 1 << 30
 lvl_big = 10
@@ -13,11 +15,6 @@ HEX_R = 70.0
 safety = 0.995
 safety_border = 0.9
 
-def getEarthRadius(latrad):
-    return (1.0 / (((math.cos(latrad)) / EARTH_Rmax) ** 2 + ((math.sin(latrad)) / EARTH_Rmin) ** 2)) ** (1.0 / 2)
-
-from math import radians, cos, sin, asin, sqrt
-
 def get_distance(location1, location2):
     lat1, lng1 = location1
     lat2, lng2 = location2
@@ -25,7 +22,7 @@ def get_distance(location1, location2):
     lat1, lng1, lat2, lng2 = map(radians, (lat1, lng1, lat2, lng2))
 
     d = sin(0.5*(lat2 - lat1)) ** 2 + cos(lat1) * cos(lat2) * sin(0.5*(lng2 - lng1)) ** 2
-    return 2 * EARTH_R * asin(sqrt(d))
+    return 2 * earth_Rrect * asin(sqrt(d))
 
 def get_border_pseudohex(coords, HEX_NUM):
     border = []
@@ -82,8 +79,8 @@ def get_pseudo_hex(location, layer_max, layer_min=0):
 def neighbor_circle(location, pos, shift=False, factor=1.0):
     pos = pos % 6
     latrad = location[0] * pi / 180
-    x_un = factor * safety / getEarthRadius(latrad) / math.cos(latrad) * 180 / pi
-    y_un = factor * safety / getEarthRadius(latrad) * 180 / pi
+    x_un = factor * safety / earth_Rrect / cos(latrad) * 180 / pi
+    y_un = factor * safety / earth_Rrect * 180 / pi
     if not shift:
         y_un = y_un * (3.0 ** 0.5) / 2.0 * HEX_R
         x_un = x_un * HEX_R * 1.5
@@ -151,7 +148,7 @@ def neighbor_s2_circle(location, i_dir=0.0, j_dir=0.0):  # input location can be
     vec_to_j = (Cell(ij_offs(cid_small, 0, 1)).get_center() - Cell(cid_small).get_center()).normalize()
     vec_to_i = (Cell(ij_offs(cid_small, 1, 0)).get_center() - Cell(cid_small).get_center()).normalize()
 
-    vec_newlocation = ll_location.to_point() + safety * HEX_R / getEarthRadius(ll_location.lat().radians) * (i_dir * 3 ** 0.5 * vec_to_i + j_dir * 1.5 * vec_to_j)
+    vec_newlocation = ll_location.to_point() + safety * HEX_R / earth_Rrect * (i_dir * 3 ** 0.5 * vec_to_i + j_dir * 1.5 * vec_to_j)
 
     return vec_newlocation  # output is Point
 
@@ -199,33 +196,29 @@ def get_area_cell(location,unfilled=False):
     return all_loc, border,cid_large
 
 def workers_for_level(lvl,parts):
-    area = MAX_AREA.get_value(lvl) * EARTH_R**2
+    area = MAX_AREA.get_value(lvl) * earth_Rmean**2
     area_scan = 1.5*3**0.5 * HEX_R**2
     num_scans = area / area_scan
     num_scans_ph_max = num_scans * 5 * 2 #10 minute time (* 6) and all cells empty (* 2)
     num_worker_scans_ph = 3600.0 / 10 - 2 #reauthorizations (- 2)
-    num_workers_required = int(math.ceil(num_scans_ph_max / parts /num_worker_scans_ph))
+    num_workers_required = int(ceil(num_scans_ph_max / parts /num_worker_scans_ph))
     return num_workers_required
 
 def workers_for_number(num_scans,parts=1):
     num_scans_ph_max = num_scans * 5 * 2 #10 minute time (* 6) and all cells empty (* 2)
     num_worker_scans_ph = 3600.0 / 10 - 2 #reauthorizations (- 2)
-    num_workers_required = int(math.ceil(num_scans_ph_max/ num_worker_scans_ph /parts))
+    num_workers_required = int(ceil(num_scans_ph_max/ num_worker_scans_ph /parts))
     return num_workers_required
 
 class Hexgrid(object):
-    EARTH_Rmax = 6378137.0
-    EARTH_Rmin = 6356752.3
-    threshold = 0.9966048
+    earth_R = earth_Rrect
+    param_shift = 217.91
+    param_stretch = 591
     r_sight = 70.0
     safety = 0.999
 
     def __init__(self):
         self.grid = self.init_grid()
-
-    @classmethod
-    def getEarthRadius(cls, latrad):
-        return (1.0 / (((math.cos(latrad)) / cls.EARTH_Rmax) ** 2 + ((math.sin(latrad)) / cls.EARTH_Rmin) ** 2)) ** (1.0 / 2)
 
     def init_lats(self):
         latrad = 0.0
@@ -234,25 +227,25 @@ class Hexgrid(object):
         c = 0.5 * self.r_sight * self.safety
         while latrad < pi / 2:
             lats.append(latrad)
-            latrad += c / self.getEarthRadius(latrad)
+            latrad += c / self.earth_R
         return lats
 
     def init_grid(self):
         grid_all = []
         lats = self.init_lats()
-        c = 2 * pi / (3 ** 0.5 * self.r_sight * self.safety)
+        c = 2 * pi / (3 ** 0.5 * self.r_sight * self.safety) * self.earth_R
 
         even_lng = True
 
-        strip_amount = int(math.ceil(c * self.EARTH_Rmax))
+        strip_amount = int(ceil(c))
         grid_all.append((0, strip_amount, even_lng))
         ind_lat = 2
 
         while ind_lat < len(lats):
-            amount = int(math.ceil(c * self.getEarthRadius(lats[ind_lat]) * math.cos(lats[ind_lat])))
-            if amount < self.threshold * strip_amount:
+            amount = int(ceil(c * cos(lats[ind_lat])))
+            if amount < strip_amount - (sin(lats[ind_lat]*2)*self.param_shift+self.param_stretch):
                 ind_lat -= 1
-                strip_amount = int(math.ceil(c * self.getEarthRadius(lats[ind_lat]) * math.cos(lats[ind_lat])))
+                strip_amount = int(ceil(c * cos(lats[ind_lat])))
             else:
                 even_lng = not even_lng
 
@@ -266,17 +259,17 @@ class Hexgrid(object):
         return grid_all
 
     def dist_cmp(self, location1, location2):
-        return math.sin(0.5 * (location2[0] - location1[0])) ** 2 + math.cos(location2[0]) * math.cos(location1[0]) * math.sin(0.5 * (location2[1] - location1[1])) ** 2
+        return sin(0.5 * (location2[0] - location1[0])) ** 2 + cos(location2[0]) * cos(location1[0]) * sin(0.5 * (location2[1] - location1[1])) ** 2
 
     def cover_circle(self,loc,radius):
         lat,lng = loc
         output = []
-        r_lng = radius / EARTH_R
+        r_lng = radius / earth_Rrect
         r_lat = r_lng /cos(lat*pi/180)
         locations = self.cover_region((lat-r_lat,lng-r_lng),(lat+r_lat,lng+r_lng))
         for location in locations:
-            if get_distance(loc,location) < radius:
-                output.append(loaction)
+            if get_distance(loc,location) <= radius:
+                output.append(location)
         return output
 
     def cover_cell(self, cid):
@@ -363,8 +356,8 @@ class Hexgrid(object):
             else:
                 c_lng = 0.5
 
-            ind_lng_f = int(math.ceil(l_lng1 / d_lng - c_lng))
-            ind_lng_t = int(math.floor(l_lng2 / d_lng - c_lng))
+            ind_lng_f = int(ceil(l_lng1 / d_lng - c_lng))
+            ind_lng_t = int(floor(l_lng2 / d_lng - c_lng))
             for ind_lng in range(ind_lng_f, ind_lng_t + 1):
                 points.append([self.grid[ind_lat][0], d_lng * (ind_lng + c_lng)])
 
@@ -397,7 +390,7 @@ class Hexgrid(object):
 
         for ind_tlat in range(ind_f, ind_t):
             d_lng = 360.0 / self.grid[ind_tlat][1]
-            lng = math.floor(l_lng / d_lng) * d_lng
+            lng = floor(l_lng / d_lng) * d_lng
             if not self.grid[ind_tlat][2]:
                 lng += 0.5 * d_lng
             poss.append([self.grid[ind_tlat][0], lng])
@@ -416,41 +409,3 @@ class Hexgrid(object):
         poss[ind_min][1] = (poss[ind_min][1] + 180) % 360 - 180
 
         return poss[ind_min]
-
-    def calc_threshold(self):
-        threshold_min = 0
-        threshold_max = 1
-
-        lats = self.init_lats()
-        c = 2 * pi / (3 ** 0.5 * self.r_sight * self.safety)
-        a1 = 0.25 * 3 ** 0.5 * self.r_sight ** 2
-        a2 = 6 * a1
-        while threshold_max - threshold_min > 1e-10:
-            threshold_step = 0.25 * (threshold_max - threshold_min)
-            waste_vals = []
-            for threshold in [threshold_min + threshold_step, threshold_min + 3 * threshold_step]:
-
-                strip_amount = int(math.ceil(c * self.EARTH_Rmax))
-                ind_lat = 2
-
-                wasted_area = 0
-                while ind_lat < len(lats):
-                    amount = int(math.ceil(c * self.getEarthRadius(lats[ind_lat]) * math.cos(lats[ind_lat])))  # how many hexes would be needed to cover the latitude
-                    if amount < threshold * strip_amount:  # smaller than threshold-> new strip is started
-                        ind_lat -= 1  # one latitude unit back, because a new strip starts, vertical overlap are the triangle tips of the hexagons, no horizontal overlap
-                        strip_amount = int(math.ceil(c * self.getEarthRadius(lats[ind_lat]) * math.cos(lats[ind_lat])))  # amount of hexes in the current strip, earth circumference / width of a hex
-                        waste = (strip_amount + amount) * a1  # combined area of all overlapping triangles in the script calculated via amount * 0.5 * baseline * height
-                        wasted_area += waste
-                    else:  # it's using more hexes than needed for latitude, but no new strip started
-                        waste = (strip_amount - amount) * a2  # wasted potential because amount_strip from a lower strip is used, when it could be ideally covered with amount, so amount of not ideal hexes * area of hex
-                        wasted_area += waste
-                    ind_lat += 3  # this is the latitude line, at which the strip is continued with no vertical overlap, but with horizontal overlap of course
-
-                waste_vals.append(wasted_area)
-
-            if waste_vals[0] < waste_vals[1]:
-                threshold_max = threshold_min + 2 * threshold_step
-            else:
-                threshold_min = threshold_min + 2 * threshold_step
-
-            print('threshold between {} and {}, wasted_area: {}'.format(threshold_min, threshold_max, min(waste_vals)))
