@@ -1,5 +1,6 @@
 from math import pi,radians, cos, sin, asin, sqrt, ceil, floor
 from s2sphere import CellId, LatLng, Cell, MAX_AREA, Point
+from operator import itemgetter
 
 earth_Rmean = 6371000.0
 earth_Rrect = 6367000.0
@@ -12,7 +13,7 @@ max_size = 1 << 30
 lvl_big = 10
 lvl_small = 17
 HEX_R = 70.0
-safety = 0.995
+safety = 0.999
 safety_border = 0.9
 
 def get_distance(location1, location2):
@@ -264,11 +265,12 @@ class Hexgrid(object):
     def cover_circle(self,loc,radius):
         lat,lng = loc
         output = []
-        r_lng = radius / earth_Rrect
-        r_lat = r_lng /cos(lat*pi/180)
+        r_lat = radius / earth_Rrect*180/pi
+        r_lng = r_lat /cos(min(abs(lat)+r_lat,90.0)*pi/180)
         locations = self.cover_region((lat-r_lat,lng-r_lng),(lat+r_lat,lng+r_lng))
         for location in locations:
-            if get_distance(loc,location) <= radius:
+            dist = get_distance(loc,location)
+            if dist < radius:
                 output.append(location)
         return output
 
@@ -333,6 +335,7 @@ class Hexgrid(object):
 
                     point[1] = (point[1] + 180) % 360 - 180
                     points.append(point)
+        points.sort(key=itemgetter(0,1))
         return points
 
     def cover_region_simple(self, location1, location2):  # lat values must be between -90 and +90, lng values must be between -180 and 180
